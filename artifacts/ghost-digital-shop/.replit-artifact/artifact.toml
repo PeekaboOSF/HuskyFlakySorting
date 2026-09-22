@@ -1,0 +1,28 @@
+kind = "web"
+previewPath = "/"
+title = "Ghost Digital Shop"
+description = "Премиальный Telegram-магазин цифровых товаров с приватной owner-only панелью, ручным подтверждением оплат и защищённой автоматической выдачей файлов и сообщений."
+version = "1.0.0"
+id = "artifacts/ghost-digital-shop"
+router = "path"
+
+[[services]]
+name = "web"
+paths = [ "/" ]
+localPort = 19995
+
+[services.development]
+run = "pnpm --filter @workspace/ghost-digital-shop run dev"
+
+[services.production]
+build = [ "pnpm", "--filter", "@workspace/ghost-digital-shop", "run", "build" ]
+serve = "static"
+publicDir = "artifacts/ghost-digital-shop/dist/public"
+
+[[services.production.rewrites]]
+from = "/*"
+to = "/index.html"
+
+[services.env]
+PORT = "19995"
+BASE_PATH = "/"

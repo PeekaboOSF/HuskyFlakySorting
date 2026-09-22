@@ -10,6 +10,8 @@ servers:
 tags:
   - name: health
     description: Health operations
+  - name: shop
+    description: Owner dashboard and shop management operations
 paths:
   /healthz:
     get:
@@ -24,7 +26,290 @@ paths:
             application/json:
               schema:
                 $ref: "#/components/schemas/HealthStatus"
+  /shop/setup/status:
+    get:
+      operationId: getSetupStatus
+      tags: [shop]
+      summary: Get owner setup status
+      responses:
+        "200":
+          description: Setup status
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetupStatus"
+  /shop/setup/claim:
+    post:
+      operationId: claimOwnerSetup
+      tags: [shop]
+      summary: Claim the owner panel with a one-time setup code
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/SetupClaimInput"
+      responses:
+        "200":
+          description: Owner session created
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/SetupStatus"
+        "400":
+          description: Invalid or expired code
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /shop/dashboard:
+    get:
+      operationId: getShopDashboard
+      tags: [shop]
+      summary: Get owner dashboard summary
+      responses:
+        "200":
+          description: Dashboard summary
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/DashboardSummary"
+  /shop/orders:
+    get:
+      operationId: listShopOrders
+      tags: [shop]
+      summary: List customer orders
+      parameters:
+        - name: status
+          in: query
+          required: false
+          schema:
+            type: string
+            enum: [all, pending, approved, rejected]
+            default: all
+        - name: search
+          in: query
+          required: false
+          schema:
+            type: string
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: number
+            minimum: 1
+            maximum: 100
+            default: 50
+      responses:
+        "200":
+          description: Orders
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Order"
+  /shop/orders/{id}/approve:
+    post:
+      operationId: approveShopOrder
+      tags: [shop]
+      summary: Approve a payment and issue the product
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Approved order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "409":
+          description: Order cannot be approved
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /shop/orders/{id}/reject:
+    post:
+      operationId: rejectShopOrder
+      tags: [shop]
+      summary: Reject a payment
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: false
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/OrderDecisionInput"
+      responses:
+        "200":
+          description: Rejected order
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "409":
+          description: Order cannot be rejected
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /shop/orders/{id}/redeliver:
+    post:
+      operationId: redeliverShopOrder
+      tags: [shop]
+      summary: Deliver a previously approved product again
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "200":
+          description: Redelivery queued
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Order"
+        "409":
+          description: Order cannot be redelivered
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ErrorResponse"
+  /shop/products:
+    get:
+      operationId: listShopProducts
+      tags: [shop]
+      summary: List digital products
+      responses:
+        "200":
+          description: Products
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/Product"
+    post:
+      operationId: createShopProduct
+      tags: [shop]
+      summary: Create a digital product
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductInput"
+      responses:
+        "201":
+          description: Created product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+  /shop/products/{id}:
+    patch:
+      operationId: updateShopProduct
+      tags: [shop]
+      summary: Update a digital product
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ProductUpdate"
+      responses:
+        "200":
+          description: Updated product
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/Product"
+    delete:
+      operationId: deleteShopProduct
+      tags: [shop]
+      summary: Archive a digital product
+      parameters:
+        - $ref: "#/components/parameters/Id"
+      responses:
+        "204":
+          description: Product archived
+  /shop/settings:
+    get:
+      operationId: getShopSettings
+      tags: [shop]
+      summary: Get payment and shop settings
+      responses:
+        "200":
+          description: Shop settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShopSettings"
+    patch:
+      operationId: updateShopSettings
+      tags: [shop]
+      summary: Update payment instructions
+      requestBody:
+        required: true
+        content:
+          application/json:
+            schema:
+              $ref: "#/components/schemas/ShopSettingsUpdate"
+      responses:
+        "200":
+          description: Updated settings
+          content:
+            application/json:
+              schema:
+                $ref: "#/components/schemas/ShopSettings"
+  /shop/events:
+    get:
+      operationId: listShopEvents
+      tags: [shop]
+      summary: List privacy-safe owner events
+      parameters:
+        - name: limit
+          in: query
+          required: false
+          schema:
+            type: number
+            minimum: 1
+            maximum: 100
+            default: 30
+      responses:
+        "200":
+          description: Event log
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/ShopEvent"
+  /shop/support:
+    get:
+      operationId: listShopSupport
+      tags: [shop]
+      summary: List support conversations
+      responses:
+        "200":
+          description: Support queue
+          content:
+            application/json:
+              schema:
+                type: array
+                items:
+                  $ref: "#/components/schemas/SupportTicket"
 components:
+  parameters:
+    Id:
+      name: id
+      in: path
+      required: true
+      schema:
+        type: number
+        minimum: 1
   schemas:
     HealthStatus:
       type: object
@@ -33,4 +318,229 @@ components:
           type: string
       required:
         - status
+    ErrorResponse:
+      type: object
+      properties:
+        error:
+          type: string
+      required: [error]
+    SetupStatus:
+      type: object
+      properties:
+        claimed:
+          type: boolean
+        sessionActive:
+          type: boolean
+        message:
+          type: string
+      required: [claimed, sessionActive, message]
+    SetupClaimInput:
+      type: object
+      properties:
+        code:
+          type: string
+          minLength: 6
+      required: [code]
+    DashboardSummary:
+      type: object
+      properties:
+        revenue:
+          type: number
+        revenueDelta:
+          type: number
+        pendingOrders:
+          type: number
+        totalOrders:
+          type: number
+        productsSold:
+          type: number
+        activeProducts:
+          type: number
+        recentOrders:
+          type: array
+          items:
+            $ref: "#/components/schemas/Order"
+        salesByDay:
+          type: array
+          items:
+            $ref: "#/components/schemas/SalesPoint"
+      required: [revenue, revenueDelta, pendingOrders, totalOrders, productsSold, activeProducts, recentOrders, salesByDay]
+    SalesPoint:
+      type: object
+      properties:
+        day:
+          type: string
+        amount:
+          type: number
+      required: [day, amount]
+    Order:
+      type: object
+      properties:
+        id:
+          type: number
+        customerName:
+          type: string
+        username:
+          type: ["string", "null"]
+        telegramId:
+          type: string
+        productName:
+          type: string
+        amount:
+          type: number
+        currency:
+          type: string
+        status:
+          type: string
+          enum: [pending, approved, rejected]
+        deliveryType:
+          type: string
+          enum: [text, document, photo, video, audio, voice, gif]
+        createdAt:
+          type: string
+          format: date-time
+        deliveredAt:
+          type: ["string", "null"]
+        canRedeliver:
+          type: boolean
+      required: [id, customerName, username, telegramId, productName, amount, currency, status, deliveryType, createdAt, deliveredAt, canRedeliver]
+    Product:
+      type: object
+      properties:
+        id:
+          type: number
+        name:
+          type: string
+        description:
+          type: string
+        price:
+          type: number
+        currency:
+          type: string
+        deliveryType:
+          type: string
+          enum: [text, document, photo, video, audio, voice, gif]
+        deliveryLabel:
+          type: string
+        inventory:
+          type: number
+        active:
+          type: boolean
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, name, description, price, currency, deliveryType, deliveryLabel, inventory, active, createdAt]
+    ProductInput:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        price:
+          type: number
+          minimum: 0
+        currency:
+          type: string
+          minLength: 1
+        deliveryType:
+          type: string
+          enum: [text, document, photo, video, audio, voice, gif]
+        deliveryLabel:
+          type: string
+          minLength: 1
+        inventory:
+          type: number
+          minimum: 0
+      required: [name, description, price, currency, deliveryType, deliveryLabel, inventory]
+    ProductUpdate:
+      type: object
+      properties:
+        name:
+          type: string
+          minLength: 1
+        description:
+          type: string
+        price:
+          type: number
+          minimum: 0
+        currency:
+          type: string
+        deliveryType:
+          type: string
+          enum: [text, document, photo, video, audio, voice, gif]
+        deliveryLabel:
+          type: string
+          minLength: 1
+        inventory:
+          type: number
+          minimum: 0
+        active:
+          type: boolean
+    OrderDecisionInput:
+      type: object
+      properties:
+        note:
+          type: string
+    ShopSettings:
+      type: object
+      properties:
+        shopName:
+          type: string
+        paymentInstructions:
+          type: string
+        supportHandle:
+          type: string
+        botStatus:
+          type: string
+          enum: [online, setup_required, paused]
+      required: [shopName, paymentInstructions, supportHandle, botStatus]
+    ShopSettingsUpdate:
+      type: object
+      properties:
+        shopName:
+          type: string
+          minLength: 1
+        paymentInstructions:
+          type: string
+        supportHandle:
+          type: string
+        botStatus:
+          type: string
+          enum: [online, setup_required, paused]
+      required: [shopName, paymentInstructions, supportHandle, botStatus]
+    ShopEvent:
+      type: object
+      properties:
+        id:
+          type: number
+        eventType:
+          type: string
+        summary:
+          type: string
+        createdAt:
+          type: string
+          format: date-time
+      required: [id, eventType, summary, createdAt]
+    SupportTicket:
+      type: object
+      properties:
+        id:
+          type: number
+        customerName:
+          type: string
+        username:
+          type: ["string", "null"]
+        topic:
+          type: string
+        status:
+          type: string
+          enum: [open, waiting, resolved]
+        lastMessage:
+          type: string
+        updatedAt:
+          type: string
+          format: date-time
+      required: [id, customerName, username, topic, status, lastMessage, updatedAt]
 
