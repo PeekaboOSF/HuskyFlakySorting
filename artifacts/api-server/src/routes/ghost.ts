@@ -80,9 +80,13 @@ router.get("/shop/setup/status", async (req, res): Promise<void> => {
   const result = GetSetupStatusResponse.parse({
     claimed: Boolean(settings.ownerTelegramIdEncrypted),
     sessionActive: ownerSession(req),
-    message: settings.ownerTelegramIdEncrypted
+    message: !process.env.BOT_TOKEN
+      ? "Add BOT_TOKEN, then enter the one-time setup code in Telegram"
+      : settings.botStatus === "paused"
+        ? "BOT_TOKEN is present but Telegram rejected it; replace it in Secrets"
+        : settings.ownerTelegramIdEncrypted
       ? (ownerSession(req) ? "Owner panel unlocked" : "Enter the one-time setup code in Telegram")
-      : "Add BOT_TOKEN, then enter the one-time setup code in Telegram",
+      : "Enter the one-time setup code in Telegram",
   });
   res.json(result);
 });

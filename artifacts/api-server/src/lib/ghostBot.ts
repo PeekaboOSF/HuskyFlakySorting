@@ -30,7 +30,7 @@ type TelegramUpdate = {
   callback_query?: { id: string; data?: string; from: { id: number }; message?: TelegramMessage };
 };
 
-type WizardState = { stage: "meta" | "payload"; name?: string; price?: number; currency?: string };
+type WizardState = { stage: "meta" | "payload" | "replacePayload"; productId?: number; name?: string; price?: number; currency?: string };
 const wizard = new Map<string, WizardState>();
 const deliveryLocks = new Set<number>();
 let offset = 0;
@@ -258,6 +258,16 @@ async function handleOwnerCommand(chatId: number, text: string, message: Telegra
     await sendMessage(chatId, "Создание товара.\nОтправьте одной строкой:\n<b>Название | Цена | Валюта</b>");
     return true;
   }
+  if (text.startsWith("/setcontent ")) {
+    const productId = Number(text.slice(12).trim());
+    if (!Number.isInteger(productId) || !(await getProduct(productId))) {
+      await sendMessage(chatId, "Укажите существующий ID позиции. Например: <b>/setcontent 3</b>");
+      return true;
+    }
+    wizard.set(String(chatId), { stage: "replacePayload", productId });
+    await sendMessage(chatId, "Отправьте новое содержимое позиции: текст, документ, фото, видео, аудио, voice или GIF.");
+    return true;
+  }
   const state = wizard.get(String(chatId));
   if (state?.stage === "meta") {
     const [name, priceRaw, currencyRaw] = text.split("|").map((part) => part.trim());
@@ -290,6 +300,23 @@ async function handleOwnerCommand(chatId: number, text: string, message: Telegra
     wizard.delete(String(chatId));
     await sendMessage(chatId, `Позиция <b>${product?.name ?? state.name}</b> добавлена в каталог.`);
     void logShopEvent("product_created", `Product added via Telegram`);
+    return true;
+  }
+  if (state?.stage === "replacePayload" && state.productId) {
+    const delivery = deliveryFromMessage(message);
+    if (!delivery) {
+      await sendMessage(chatId, "Нужен текст или поддерживаемый файл.");
+      return true;
+    }
+    await db.update(productsTable).set({
+      deliveryType: delivery.type,
+      deliveryLabel: delivery.label,
+      deliveryPayloadEncrypted: encrypt(delivery.payload),
+      updatedAt: new Date(),
+    }).where(eq(productsTable.id, state.productId));
+    wizard.delete(String(chatId));
+    await sendMessage(chatId, `Содержимое позиции #${state.productId} обновлено.`);
+    void logShopEvent("product_content_updated", `Product #${state.productId} content updated`);
     return true;
   }
   return false;
@@ -432,7 +459,15 @@ export function startGhostBot(): void {
   void (async () => {
     await ensureShopInitialized();
     const me = await telegram<{ username?: string }>("getMe", {});
+    if (!me) {
+      const settings = await getSettings();
+      await db.update(shopSettingsTable).set({ botStatus: "paused", updatedAt: new Date() }).where(eq(shopSettingsTable.id, settings.id));
+      logger.error("BOT_TOKEN is present but Telegram rejected it. Replace BOT_TOKEN in Secrets with a valid BotFather token.");
+      return;
+    }
     botUsername = me?.username ?? "";
+    const settings = await getSettings();
+    await db.update(shopSettingsTable).set({ botStatus: "online", updatedAt: new Date() }).where(eq(shopSettingsTable.id, settings.id));
     logger.info({ botUsername }, "Ghost Telegram bot started");
     await poll();
   })();

@@ -17,6 +17,10 @@ let setupCodeLogged = false;
 export async function ensureShopInitialized(): Promise<ShopSettings> {
   const [existing] = await db.select().from(shopSettingsTable).limit(1);
   if (existing) {
+    if (existing.shopName !== "Haskibotrain") {
+      await db.update(shopSettingsTable).set({ shopName: "Haskibotrain", updatedAt: new Date() }).where(eq(shopSettingsTable.id, existing.id));
+    }
+    await seedHaskibotrainProducts();
     if (!existing.setupCodeHash && !existing.ownerTelegramIdEncrypted) {
       const code = randomSetupCode();
       await db.update(shopSettingsTable).set({
@@ -45,21 +49,38 @@ export async function ensureShopInitialized(): Promise<ShopSettings> {
   logger.warn({ setupCode: code }, "Ghost owner setup code generated; enter /setup <code> in Telegram");
   setupCodeLogged = true;
 
-  const [count] = await db.select({ count: sql<number>`count(*)` }).from(productsTable);
-  if (Number(count?.count ?? 0) === 0) {
-    await db.insert(productsTable).values({
-      name: "GHOST Starter Pack",
-      description: "Демо-позиция для проверки каталога. Её можно изменить или архивировать в owner-панели.",
-      price: 0,
-      currency: "RUB",
-      deliveryType: "text",
-      deliveryLabel: "Текстовое сообщение",
-      deliveryPayloadEncrypted: encrypt("Добро пожаловать в GHOST. Замените этот демо-товар на свою позицию."),
-      inventory: 999,
-      active: true,
-    });
-  }
+  await seedHaskibotrainProducts();
   return created!;
+}
+
+async function seedHaskibotrainProducts(): Promise<void> {
+  const [demo] = await db.select().from(productsTable).where(eq(productsTable.name, "GHOST Starter Pack")).limit(1);
+  if (demo?.active) {
+    await db.update(productsTable).set({ active: false, updatedAt: new Date() }).where(eq(productsTable.id, demo.id));
+  }
+  const positions = [
+    { name: "кристаллл · 1 г", price: 5200 },
+    { name: "кристаллл · 2 г", price: 7200 },
+    { name: "мед премиум · 1 г", price: 6400 },
+    { name: "meou · 1 г", price: 4000 },
+    { name: "meou · 2 г", price: 6300 },
+  ];
+  for (const position of positions) {
+    const [found] = await db.select({ id: productsTable.id }).from(productsTable).where(eq(productsTable.name, position.name)).limit(1);
+    if (!found) {
+      await db.insert(productsTable).values({
+        name: position.name,
+        description: "Выдача текстовой инструкции после ручного подтверждения оплаты.",
+        price: position.price,
+        currency: "RUB",
+        deliveryType: "text",
+        deliveryLabel: "Инструкция в Telegram",
+        deliveryPayloadEncrypted: encrypt(`Инструкция для позиции «${position.name}» ещё не загружена владельцем. Используйте /setcontent ${position.name} после привязки владельца.`),
+        inventory: 999,
+        active: true,
+      });
+    }
+  }
 }
 
 export async function logShopEvent(eventType: string, summary: string): Promise<void> {

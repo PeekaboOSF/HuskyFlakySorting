@@ -1,0 +1,1 @@
+- [OpenAPI integer compatibility](openapi-integer-compatibility.md) — In this workspace, OpenAPI integer schemas generate zod.int(), which is incompatible with the installed Zod runtime; use numeric schemas with validation instead.
