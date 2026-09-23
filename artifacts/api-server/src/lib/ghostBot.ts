@@ -2,12 +2,22 @@ import { and, desc, eq } from "drizzle-orm";
 import {
   db,
   ordersTable,
+  paymentCardsTable,
   productsTable,
   shopSettingsTable,
   supportTicketsTable,
 } from "@workspace/db";
 import { decrypt, encrypt, lookupHash } from "./ghostSecurity";
-import { ensureShopInitialized, getOrder, getProduct, getSettings, logShopEvent } from "./ghostStore";
+import {
+  claimNextPaymentCard,
+  ensureShopInitialized,
+  getOrder,
+  getProduct,
+  getSettings,
+  isShopCity,
+  SHOP_CITIES,
+  logShopEvent,
+} from "./ghostStore";
 import { logger } from "./logger";
 
 type TelegramMessage = {
@@ -30,8 +40,16 @@ type TelegramUpdate = {
   callback_query?: { id: string; data?: string; from: { id: number }; message?: TelegramMessage };
 };
 
-type WizardState = { stage: "meta" | "payload" | "replacePayload"; productId?: number; name?: string; price?: number; currency?: string };
+type WizardState = {
+  stage: "meta" | "payload" | "replacePayload" | "cardPayload" | "supportReply";
+  productId?: number;
+  name?: string;
+  price?: number;
+  currency?: string;
+  ticketId?: number;
+};
 const wizard = new Map<string, WizardState>();
+const cityByChat = new Map<string, string>();
 const deliveryLocks = new Set<number>();
 let offset = 0;
 let botUsername = "";
@@ -72,10 +90,22 @@ async function answerCallback(id: string, text?: string): Promise<void> {
 function mainMenu() {
   return {
     inline_keyboard: [
+      [{ text: "Выбрать город", callback_data: "cities" }],
       [{ text: "Каталог", callback_data: "catalog" }, { text: "Мои заказы", callback_data: "my_orders" }],
       [{ text: "Поддержка", callback_data: "support" }],
     ],
   };
+}
+
+function cityMenu() {
+  return {
+    inline_keyboard: SHOP_CITIES.map((city, index) => [{ text: city, callback_data: `city:${index}` }]),
+  };
+}
+
+function cityForChat(chatId: number): string | undefined {
+  const city = cityByChat.get(String(chatId));
+  return city && isShopCity(city) ? city : undefined;
 }
 
 function deliveryFromMessage(message: TelegramMessage): { type: string; label: string; payload: string } | null {
@@ -138,12 +168,17 @@ async function ownerId(): Promise<number | null> {
 }
 
 async function sendCatalog(chatId: number): Promise<void> {
+  const city = cityForChat(chatId);
+  if (!city) {
+    await sendMessage(chatId, "Сначала выберите город получения:", cityMenu());
+    return;
+  }
   const products = await db.select().from(productsTable).where(eq(productsTable.active, true)).orderBy(desc(productsTable.createdAt));
   if (!products.length) {
     await sendMessage(chatId, "Сейчас каталог пуст. Возвращайтесь позже.", mainMenu());
     return;
   }
-  await sendMessage(chatId, "<b>GHOST DIGITAL</b>\n\nВыберите позицию:", {
+  await sendMessage(chatId, `<b>HASKIBOTRAIN</b>\n\nГород: <b>${city}</b>\nВыберите позицию:`, {
     inline_keyboard: products.map((product) => [{
       text: `${product.name} · ${product.price} ${product.currency}`,
       callback_data: `product:${product.id}`,
@@ -152,12 +187,17 @@ async function sendCatalog(chatId: number): Promise<void> {
 }
 
 async function showProduct(chatId: number, id: number): Promise<void> {
+  const city = cityForChat(chatId);
+  if (!city) {
+    await sendMessage(chatId, "Сначала выберите город получения:", cityMenu());
+    return;
+  }
   const product = await getProduct(id);
   if (!product || !product.active) {
     await sendMessage(chatId, "Эта позиция больше недоступна.", mainMenu());
     return;
   }
-  await sendMessage(chatId, `<b>${product.name}</b>\n\n${product.description}\n\n<b>${product.price} ${product.currency}</b>\nФормат выдачи: ${product.deliveryLabel}`, {
+  await sendMessage(chatId, `<b>${product.name}</b>\n\nГород: ${city}\n${product.description}\n\n<b>${product.price} ${product.currency}</b>\nФормат выдачи: ${product.deliveryLabel}`, {
     inline_keyboard: [
       [{ text: "Оформить заказ", callback_data: `buy:${product.id}` }],
       [{ text: "Назад к каталогу", callback_data: "catalog" }],
@@ -166,6 +206,11 @@ async function showProduct(chatId: number, id: number): Promise<void> {
 }
 
 async function createOrder(chatId: number, message: TelegramMessage, productId: number): Promise<void> {
+  const city = cityForChat(chatId);
+  if (!city) {
+    await sendMessage(chatId, "Сначала выберите город получения:", cityMenu());
+    return;
+  }
   const product = await getProduct(productId);
   if (!product || !product.active) {
     await sendMessage(chatId, "Позиция недоступна.", mainMenu());
@@ -177,11 +222,19 @@ async function createOrder(chatId: number, message: TelegramMessage, productId: 
     eq(ordersTable.status, "pending"),
   )).orderBy(desc(ordersTable.createdAt)).limit(1);
   if (existing.length) {
-    await sendMessage(chatId, "У вас уже есть ожидающий заказ на эту позицию. Нажмите кнопку ниже после оплаты.", {
+    const previousPayment = decrypt(existing[0]!.paymentDetailsEncrypted);
+    await sendMessage(chatId, `У вас уже есть ожидающий заказ на эту позицию в городе ${existing[0]!.city}.\n\n${previousPayment ? `<b>Данные для оплаты</b>\n${previousPayment}\n\n` : ""}Нажмите кнопку ниже после оплаты.`, {
       inline_keyboard: [[{ text: "Я оплатил", callback_data: `paid:${existing[0]!.id}` }]],
     });
     return;
   }
+  const paymentCard = await claimNextPaymentCard();
+  const settings = await getSettings();
+  const baseInstructions = decrypt(settings.paymentInstructions) || settings.paymentInstructions;
+  const paymentDetails = [
+    paymentCard ? `<b>${paymentCard.label}</b>\n${decrypt(paymentCard.detailsEncrypted)}` : "",
+    baseInstructions,
+  ].filter(Boolean).join("\n\n");
   const [order] = await db.insert(ordersTable).values({
     customerNameEncrypted: encrypt([message.from?.first_name, message.from?.last_name].filter(Boolean).join(" ") || "Telegram user"),
     usernameEncrypted: message.from?.username ? encrypt(`@${message.from.username}`) : null,
@@ -193,11 +246,11 @@ async function createOrder(chatId: number, message: TelegramMessage, productId: 
     currency: product.currency,
     status: "pending",
     deliveryType: product.deliveryType,
+    city,
+    paymentDetailsEncrypted: paymentDetails ? encrypt(paymentDetails) : null,
   }).returning();
   if (!order) return;
-  const settings = await getSettings();
-  const paymentInstructions = decrypt(settings.paymentInstructions) || settings.paymentInstructions;
-  await sendMessage(chatId, `<b>Заказ #${order.id}</b>\n\n${product.name}\nСумма: <b>${product.price} ${product.currency}</b>\n\n<b>Инструкция по оплате</b>\n${paymentInstructions}\n\nПосле перевода нажмите кнопку один раз.`, {
+  await sendMessage(chatId, `<b>Заказ #${order.id}</b>\n\n${product.name}\nГород: <b>${city}</b>\nСумма: <b>${product.price} ${product.currency}</b>\n\n<b>Инструкция по оплате</b>\n${paymentDetails || "Инструкции по оплате пока не настроены владельцем."}\n\nПосле перевода нажмите кнопку один раз.`, {
     inline_keyboard: [[{ text: "Я оплатил", callback_data: `paid:${order.id}` }], [{ text: "Мои заказы", callback_data: "my_orders" }]],
   });
   void logShopEvent("order_created", `Order #${order.id} created`);
@@ -207,12 +260,63 @@ async function notifyOwner(orderId: number): Promise<void> {
   const chatId = await ownerId();
   const order = await getOrder(orderId);
   if (!chatId || !order) return;
-  await sendMessage(chatId, `<b>Новый заказ #${order.id}</b>\n\nПокупатель: ${decrypt(order.customerNameEncrypted)}\nUsername: ${decrypt(order.usernameEncrypted) || "—"}\nTelegram ID: ${decrypt(order.telegramIdEncrypted)}\nТовар: ${decrypt(order.productNameEncrypted)}\nСумма: <b>${order.amount} ${order.currency}</b>\nСтатус: ожидает проверки`, {
+  await sendMessage(chatId, `<b>Новый заказ #${order.id}</b>\n\nПокупатель: ${decrypt(order.customerNameEncrypted)}\nUsername: ${decrypt(order.usernameEncrypted) || "—"}\nTelegram ID: ${decrypt(order.telegramIdEncrypted)}\nГород: <b>${order.city}</b>\nТовар: ${decrypt(order.productNameEncrypted)}\nСумма: <b>${order.amount} ${order.currency}</b>\nСтатус: ожидает проверки`, {
     inline_keyboard: [[
       { text: "Подтвердить", callback_data: `approve:${order.id}` },
       { text: "Отклонить", callback_data: `reject:${order.id}` },
     ]],
   });
+}
+
+function maskCardDetails(details: string): string {
+  const digits = details.replace(/\D/g, "");
+  return digits.length >= 4 ? `•••• ${digits.slice(-4)}` : "данные сохранены";
+}
+
+async function sendSupportQueue(chatId: number): Promise<void> {
+  const tickets = await db.select().from(supportTicketsTable).orderBy(desc(supportTicketsTable.updatedAt)).limit(10);
+  if (!tickets.length) {
+    await sendMessage(chatId, "Очередь поддержки пуста.");
+    return;
+  }
+  for (const ticket of tickets) {
+    await sendMessage(chatId, `<b>Обращение #${ticket.id}</b>\n${decrypt(ticket.customerNameEncrypted)} · ${ticket.status}\n\n${decrypt(ticket.lastMessageEncrypted)}`, {
+      inline_keyboard: [
+        [{ text: "Ответить", callback_data: `support:reply:${ticket.id}` }, { text: "Закрыть", callback_data: `support:close:${ticket.id}` }],
+      ],
+    });
+  }
+}
+
+async function notifyOwnerSupport(ticketId: number): Promise<void> {
+  const chatId = await ownerId();
+  if (!chatId) return;
+  const [ticket] = await db.select().from(supportTicketsTable).where(eq(supportTicketsTable.id, ticketId)).limit(1);
+  if (!ticket) return;
+  await sendMessage(chatId, `<b>Новое обращение #${ticket.id}</b>\n\n${decrypt(ticket.customerNameEncrypted)}\n${decrypt(ticket.lastMessageEncrypted)}`, {
+    inline_keyboard: [[{ text: "Ответить", callback_data: `support:reply:${ticket.id}` }, { text: "Закрыть", callback_data: `support:close:${ticket.id}` }]],
+  });
+}
+
+async function replyToTicket(ownerChatId: number, ticketId: number, reply: string): Promise<void> {
+  const [ticket] = await db.select().from(supportTicketsTable).where(eq(supportTicketsTable.id, ticketId)).limit(1);
+  if (!ticket || !ticket.telegramIdEncrypted) {
+    await sendMessage(ownerChatId, "Обращение не найдено или создано до обновления поддержки.");
+    return;
+  }
+  const customerChatId = Number(decrypt(ticket.telegramIdEncrypted));
+  if (!Number.isFinite(customerChatId)) {
+    await sendMessage(ownerChatId, "У обращения нет доступного Telegram-чата.");
+    return;
+  }
+  await sendMessage(customerChatId, `<b>Ответ поддержки</b>\n\n${reply}`, mainMenu());
+  await db.update(supportTicketsTable).set({
+    status: "answered",
+    lastMessageEncrypted: encrypt(reply),
+    updatedAt: new Date(),
+  }).where(eq(supportTicketsTable.id, ticketId));
+  await sendMessage(ownerChatId, `Ответ по обращению #${ticketId} отправлен.`);
+  void logShopEvent("support_replied", `Support ticket #${ticketId} answered`);
 }
 
 async function handleOwnerCommand(chatId: number, text: string, message: TelegramMessage): Promise<boolean> {
@@ -248,9 +352,45 @@ async function handleOwnerCommand(chatId: number, text: string, message: Telegra
       inline_keyboard: [
         [{ text: "Статистика", callback_data: "admin:stats" }, { text: "Заказы", callback_data: "admin:orders" }],
         [{ text: "Товары", callback_data: "admin:products" }, { text: "Поддержка", callback_data: "admin:support" }],
-        [{ text: "Оплата", callback_data: "admin:payment" }],
+        [{ text: "Оплата", callback_data: "admin:payment" }, { text: "Карты", callback_data: "admin:cards" }],
       ],
     });
+    return true;
+  }
+  if (text === "/addcard") {
+    wizard.set(String(chatId), { stage: "cardPayload" });
+    await sendMessage(chatId, "Добавление карты.\nОтправьте одной строкой:\n<b>Название карты | реквизиты и комментарий для покупателя</b>\n\nНапример: Сбербанк | 2200 0000 0000 0000, имя получателя");
+    return true;
+  }
+  if (text === "/cards") {
+    const cards = await db.select().from(paymentCardsTable).orderBy(desc(paymentCardsTable.createdAt));
+    await sendMessage(chatId, cards.length
+      ? cards.map((card) => `#${card.id} · ${card.label} · ${card.active ? "активна" : "выключена"} · использована ${card.usageCount} раз · ${maskCardDetails(decrypt(card.detailsEncrypted))}`).join("\n")
+      : "Карт пока нет.\nДля добавления отправьте /addcard");
+    return true;
+  }
+  if (text.startsWith("/disablecard ") || text.startsWith("/enablecard ")) {
+    const disabling = text.startsWith("/disablecard ");
+    const id = Number(text.split(/\s+/)[1]);
+    if (!Number.isInteger(id)) {
+      await sendMessage(chatId, `Укажите ID карты. Например: <b>/${disabling ? "disablecard" : "enablecard"} 1</b>`);
+      return true;
+    }
+    const [card] = await db.update(paymentCardsTable).set({ active: !disabling, updatedAt: new Date() }).where(eq(paymentCardsTable.id, id)).returning();
+    await sendMessage(chatId, card
+      ? `Карта #${id} ${disabling ? "выключена" : "включена"}.`
+      : "Карта не найдена.");
+    return true;
+  }
+  if (text.startsWith("/reply ")) {
+    const [, idRaw, ...replyParts] = text.split(/\s+/);
+    const ticketId = Number(idRaw);
+    const reply = replyParts.join(" ").trim();
+    if (!Number.isInteger(ticketId) || !reply) {
+      await sendMessage(chatId, "Формат: <b>/reply ID текст ответа</b>");
+      return true;
+    }
+    await replyToTicket(chatId, ticketId, reply);
     return true;
   }
   if (text === "/newproduct") {
@@ -269,6 +409,34 @@ async function handleOwnerCommand(chatId: number, text: string, message: Telegra
     return true;
   }
   const state = wizard.get(String(chatId));
+  if (state?.stage === "cardPayload") {
+    const payload = text.trim();
+    const separator = payload.indexOf("|");
+    const label = (separator >= 0 ? payload.slice(0, separator) : "Платёжная карта").trim();
+    const details = (separator >= 0 ? payload.slice(separator + 1) : payload).trim();
+    if (!details) {
+      await sendMessage(chatId, "Отправьте реквизиты карты. Они будут храниться зашифрованно.");
+      return true;
+    }
+    const [card] = await db.insert(paymentCardsTable).values({
+      label: label || "Платёжная карта",
+      detailsEncrypted: encrypt(details),
+      active: true,
+    }).returning();
+    wizard.delete(String(chatId));
+    await sendMessage(chatId, `Карта #${card?.id ?? "?"} добавлена и включена в последовательную выдачу.`);
+    void logShopEvent("payment_card_added", "Payment card added by owner");
+    return true;
+  }
+  if (state?.stage === "supportReply" && state.ticketId) {
+    if (!text) {
+      await sendMessage(chatId, "Напишите текст ответа.");
+      return true;
+    }
+    wizard.delete(String(chatId));
+    await replyToTicket(chatId, state.ticketId, text);
+    return true;
+  }
   if (state?.stage === "meta") {
     const [name, priceRaw, currencyRaw] = text.split("|").map((part) => part.trim());
     const price = Number(priceRaw);
@@ -326,12 +494,28 @@ async function handleCallback(query: NonNullable<TelegramUpdate["callback_query"
   const chatId = query.message?.chat.id ?? query.from.id;
   const data = query.data ?? "";
   await answerCallback(query.id);
+  if (data === "cities") {
+    await sendMessage(chatId, "Выберите город получения:", cityMenu());
+    return;
+  }
+  if (data.startsWith("city:")) {
+    const index = Number(data.slice(5));
+    const city = Number.isInteger(index) ? SHOP_CITIES[index] : undefined;
+    if (!city) {
+      await sendMessage(chatId, "Город не найден. Выберите его ещё раз.", cityMenu());
+      return;
+    }
+    cityByChat.set(String(chatId), city);
+    await sendMessage(chatId, `Город выбран: <b>${city}</b>`, mainMenu());
+    await sendCatalog(chatId);
+    return;
+  }
   if (data === "catalog") return sendCatalog(chatId);
   if (data.startsWith("product:")) return showProduct(chatId, Number(data.slice(8)));
   if (data.startsWith("buy:")) return createOrder(chatId, query.message ?? { message_id: 0, chat: { id: chatId }, from: { id: chatId } }, Number(data.slice(4)));
   if (data === "my_orders") {
     const orders = await db.select().from(ordersTable).where(eq(ordersTable.telegramLookupHash, lookupHash(String(chatId)))).orderBy(desc(ordersTable.createdAt)).limit(10);
-    await sendMessage(chatId, orders.length ? orders.map((order) => `#${order.id} · ${decrypt(order.productNameEncrypted)} · ${order.status === "approved" ? "выдан" : order.status === "rejected" ? "отклонён" : "ожидает проверки"}`).join("\n") : "Заказов пока нет.", mainMenu());
+    await sendMessage(chatId, orders.length ? orders.map((order) => `#${order.id} · ${decrypt(order.productNameEncrypted)} · ${order.city} · ${order.status === "approved" ? "выдан" : order.status === "rejected" ? "отклонён" : "ожидает проверки"}`).join("\n") : "Заказов пока нет.", mainMenu());
     return;
   }
   if (data === "support") {
@@ -352,6 +536,20 @@ async function handleCallback(query: NonNullable<TelegramUpdate["callback_query"
   }
   const owner = await ownerId();
   if (chatId !== owner) return;
+  if (data.startsWith("support:reply:")) {
+    const ticketId = Number(data.slice("support:reply:".length));
+    if (!Number.isInteger(ticketId)) return;
+    wizard.set(String(chatId), { stage: "supportReply", ticketId });
+    await sendMessage(chatId, `Напишите ответ для обращения #${ticketId}.`);
+    return;
+  }
+  if (data.startsWith("support:close:")) {
+    const ticketId = Number(data.slice("support:close:".length));
+    if (!Number.isInteger(ticketId)) return;
+    await db.update(supportTicketsTable).set({ status: "closed", updatedAt: new Date() }).where(eq(supportTicketsTable.id, ticketId));
+    await sendMessage(chatId, `Обращение #${ticketId} закрыто.`);
+    return;
+  }
   if (data === "admin:home") {
     await handleOwnerCommand(chatId, "/owner", { message_id: 0, chat: { id: chatId }, from: { id: chatId }, text: "/owner" });
     return;
@@ -374,12 +572,16 @@ async function handleCallback(query: NonNullable<TelegramUpdate["callback_query"
   }
   if (data === "admin:payment") {
     const settings = await getSettings();
-    await sendMessage(chatId, `<b>Инструкции по оплате</b>\n\n${decrypt(settings.paymentInstructions) || settings.paymentInstructions}\n\nИзменение текста: /setpayment новый текст`);
+    const cards = await db.select().from(paymentCardsTable).where(eq(paymentCardsTable.active, true)).orderBy(desc(paymentCardsTable.id));
+    await sendMessage(chatId, `<b>Инструкции по оплате</b>\n\n${decrypt(settings.paymentInstructions) || settings.paymentInstructions}\n\nАктивных карт: ${cards.length}\nДобавить карту: /addcard\nСписок карт: /cards\nИзменение текста: /setpayment новый текст`);
+    return;
+  }
+  if (data === "admin:cards") {
+    await handleOwnerCommand(chatId, "/cards", { message_id: 0, chat: { id: chatId }, from: { id: chatId }, text: "/cards" });
     return;
   }
   if (data === "admin:support") {
-    const tickets = await db.select().from(supportTicketsTable).orderBy(desc(supportTicketsTable.updatedAt)).limit(10);
-    await sendMessage(chatId, tickets.length ? tickets.map((ticket) => `#${ticket.id} · ${ticket.topic} · ${ticket.status}\n${decrypt(ticket.lastMessageEncrypted)}`).join("\n\n") : "Очередь поддержки пуста.");
+    await sendSupportQueue(chatId);
     return;
   }
   if (data.startsWith("approve:") || data.startsWith("reject:")) {
@@ -407,8 +609,9 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     const handled = await handleOwnerCommand(chatId, text, message);
     if (handled) return;
     if (text === "/start" || text === "/catalog") {
-      await sendMessage(chatId, "<b>GHOST DIGITAL</b>\n\nЦифровые товары с выдачей после ручной проверки оплаты.", mainMenu());
-      await sendCatalog(chatId);
+      await sendMessage(chatId, "<b>HASKIBOTRAIN</b>\n\nВыберите город, затем позицию. Выдача происходит после ручной проверки оплаты.", mainMenu());
+      if (text === "/start") await sendMessage(chatId, "Выберите город получения:", cityMenu());
+      else await sendCatalog(chatId);
       return;
     }
     if (text === "/owner") {
@@ -425,15 +628,17 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     return;
   }
   if (owner !== chatId && text && !text.startsWith("/")) {
-    await db.insert(supportTicketsTable).values({
+    const [ticket] = await db.insert(supportTicketsTable).values({
       customerNameEncrypted: encrypt(message.from?.first_name ?? "Telegram user"),
       usernameEncrypted: message.from?.username ? encrypt(`@${message.from.username}`) : null,
       telegramLookupHash: lookupHash(String(chatId)),
+      telegramIdEncrypted: encrypt(String(chatId)),
       topic: "Сообщение покупателя",
       status: "open",
       lastMessageEncrypted: encrypt(text),
-    });
+    }).returning();
     await sendMessage(chatId, "Сообщение передано в поддержку.", mainMenu());
+    if (ticket) void notifyOwnerSupport(ticket.id);
   }
 }
 

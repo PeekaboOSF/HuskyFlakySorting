@@ -65,6 +65,7 @@ function orderView(order: Order) {
     username: decrypt(order.usernameEncrypted) || null,
     telegramId: decrypt(order.telegramIdEncrypted),
     productName: decrypt(order.productNameEncrypted),
+    city: order.city,
     amount: order.amount,
     currency: order.currency,
     status: order.status,

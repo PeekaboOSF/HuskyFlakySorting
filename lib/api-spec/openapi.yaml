@@ -386,6 +386,8 @@ components:
           type: string
         productName:
           type: string
+        city:
+          type: string
         amount:
           type: number
         currency:
@@ -403,7 +405,7 @@ components:
           type: ["string", "null"]
         canRedeliver:
           type: boolean
-      required: [id, customerName, username, telegramId, productName, amount, currency, status, deliveryType, createdAt, deliveredAt, canRedeliver]
+      required: [id, customerName, username, telegramId, productName, city, amount, currency, status, deliveryType, createdAt, deliveredAt, canRedeliver]
     Product:
       type: object
       properties:

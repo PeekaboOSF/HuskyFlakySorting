@@ -18,6 +18,7 @@ export const shopSettingsTable = pgTable("shop_settings", {
   setupCodeHash: text("setup_code_hash"),
   setupCodeIssuedAt: timestamp("setup_code_issued_at", { withTimezone: true }),
   claimedAt: timestamp("claimed_at", { withTimezone: true }),
+  paymentCardCursor: integer("payment_card_cursor").notNull().default(0),
   createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
@@ -49,6 +50,8 @@ export const ordersTable = pgTable("shop_orders", {
   currency: text("currency").notNull(),
   status: text("status").notNull().default("pending"),
   deliveryType: text("delivery_type").notNull(),
+  city: text("city").notNull().default("Не выбран"),
+  paymentDetailsEncrypted: text("payment_details_encrypted"),
   deliveredAt: timestamp("delivered_at", { withTimezone: true }),
   deliveryCount: integer("delivery_count").notNull().default(0),
   decisionNoteEncrypted: text("decision_note_encrypted"),
@@ -68,9 +71,21 @@ export const supportTicketsTable = pgTable("shop_support_tickets", {
   customerNameEncrypted: text("customer_name_encrypted").notNull(),
   usernameEncrypted: text("username_encrypted"),
   telegramLookupHash: text("telegram_lookup_hash").notNull(),
+  telegramIdEncrypted: text("telegram_id_encrypted").notNull().default(""),
   topic: text("topic").notNull(),
   status: text("status").notNull().default("open"),
   lastMessageEncrypted: text("last_message_encrypted").notNull(),
+  updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
+});
+
+export const paymentCardsTable = pgTable("shop_payment_cards", {
+  id: serial("id").primaryKey(),
+  label: text("label").notNull(),
+  detailsEncrypted: text("details_encrypted").notNull(),
+  active: boolean("active").notNull().default(true),
+  usageCount: integer("usage_count").notNull().default(0),
+  lastUsedAt: timestamp("last_used_at", { withTimezone: true }),
+  createdAt: timestamp("created_at", { withTimezone: true }).notNull().defaultNow(),
   updatedAt: timestamp("updated_at", { withTimezone: true }).notNull().defaultNow(),
 });
 
@@ -79,3 +94,4 @@ export type Product = typeof productsTable.$inferSelect;
 export type Order = typeof ordersTable.$inferSelect;
 export type ShopEvent = typeof eventsTable.$inferSelect;
 export type SupportTicket = typeof supportTicketsTable.$inferSelect;
+export type PaymentCard = typeof paymentCardsTable.$inferSelect;

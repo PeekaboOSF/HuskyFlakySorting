@@ -15,6 +15,7 @@ export interface Order {
   username: string | null;
   telegramId: string;
   productName: string;
+  city: string;
   amount: number;
   currency: string;
   status: OrderStatus;

@@ -1,8 +1,9 @@
-import { and, desc, eq, sql } from "drizzle-orm";
+import { and, asc, desc, eq, sql } from "drizzle-orm";
 import {
   db,
   eventsTable,
   ordersTable,
+  paymentCardsTable,
   productsTable,
   shopSettingsTable,
   supportTicketsTable,
@@ -133,6 +134,43 @@ export async function getPendingOrderForUser(productId: number, telegramLookupHa
 
 export async function getSettings(): Promise<ShopSettings> {
   return ensureShopInitialized();
+}
+
+export const SHOP_CITIES = ["Большеречье", "Омск", "Любинo", "Калачинск"] as const;
+export type ShopCity = typeof SHOP_CITIES[number];
+
+export function isShopCity(value: string): value is ShopCity {
+  return (SHOP_CITIES as readonly string[]).includes(value);
+}
+
+let paymentCardClaimQueue = Promise.resolve();
+
+export async function claimNextPaymentCard() {
+  let result: typeof paymentCardsTable.$inferSelect | undefined;
+  const task = paymentCardClaimQueue.then(async () => {
+    await db.transaction(async (tx) => {
+      const [settings] = await tx.select().from(shopSettingsTable).limit(1);
+      if (!settings) return;
+      const cards = await tx.select().from(paymentCardsTable)
+        .where(eq(paymentCardsTable.active, true))
+        .orderBy(asc(paymentCardsTable.id));
+      if (!cards.length) return;
+      const index = settings.paymentCardCursor % cards.length;
+      result = cards[index];
+      await tx.update(shopSettingsTable).set({
+        paymentCardCursor: (index + 1) % cards.length,
+        updatedAt: new Date(),
+      }).where(eq(shopSettingsTable.id, settings.id));
+      await tx.update(paymentCardsTable).set({
+        usageCount: sql`${paymentCardsTable.usageCount} + 1`,
+        lastUsedAt: new Date(),
+        updatedAt: new Date(),
+      }).where(eq(paymentCardsTable.id, cards[index]!.id));
+    });
+  });
+  paymentCardClaimQueue = task.then(() => undefined, () => undefined);
+  await task;
+  return result;
 }
 
 export async function getSupportTickets() {
