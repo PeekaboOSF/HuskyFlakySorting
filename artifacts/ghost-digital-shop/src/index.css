@@ -35,26 +35,26 @@
 }
 
 :root {
-  --background: 42 31% 96%;
-  --foreground: 228 21% 17%;
-  --border: 38 19% 86%;
-  --input: 38 19% 86%;
-  --ring: 176 55% 42%;
-  --card: 42 37% 99%;
-  --card-foreground: 228 21% 17%;
-  --card-border: 38 19% 86%;
-  --primary: 176 55% 38%;
-  --primary-foreground: 42 31% 96%;
-  --secondary: 228 18% 91%;
-  --secondary-foreground: 228 21% 17%;
-  --muted: 39 24% 91%;
-  --muted-foreground: 228 10% 45%;
-  --accent: 15 83% 64%;
-  --accent-foreground: 228 21% 17%;
+  --background: 42 27% 94%;
+  --foreground: 230 19% 14%;
+  --border: 35 16% 82%;
+  --input: 35 16% 82%;
+  --ring: 169 57% 34%;
+  --card: 45 35% 98%;
+  --card-foreground: 230 19% 14%;
+  --card-border: 35 16% 82%;
+  --primary: 169 57% 34%;
+  --primary-foreground: 42 27% 94%;
+  --secondary: 231 18% 88%;
+  --secondary-foreground: 230 19% 14%;
+  --muted: 38 20% 89%;
+  --muted-foreground: 230 11% 43%;
+  --accent: 29 92% 61%;
+  --accent-foreground: 230 19% 14%;
   --destructive: 4 67% 53%;
-  --destructive-foreground: 42 31% 96%;
-  --popover: 42 37% 99%;
-  --popover-foreground: 228 21% 17%;
+  --destructive-foreground: 42 27% 94%;
+  --popover: 45 35% 98%;
+  --popover-foreground: 230 19% 14%;
   --app-font-sans: 'Manrope', sans-serif;
   --app-font-mono: 'DM Mono', monospace;
   --font-display: 'Space Grotesk', sans-serif;
@@ -62,22 +62,22 @@
 }
 
 .dark {
-  --background: 228 21% 11%;
-  --foreground: 42 31% 96%;
-  --border: 228 16% 24%;
-  --input: 228 16% 24%;
-  --ring: 176 55% 48%;
-  --card: 228 19% 14%;
-  --card-foreground: 42 31% 96%;
-  --card-border: 228 16% 24%;
-  --primary: 176 55% 48%;
-  --primary-foreground: 228 21% 11%;
-  --secondary: 228 16% 22%;
-  --secondary-foreground: 42 31% 96%;
-  --muted: 228 16% 22%;
-  --muted-foreground: 228 10% 68%;
-  --accent: 15 83% 64%;
-  --accent-foreground: 228 21% 11%;
+  --background: 230 19% 12%;
+  --foreground: 42 27% 94%;
+  --border: 230 14% 25%;
+  --input: 230 14% 25%;
+  --ring: 169 57% 46%;
+  --card: 230 18% 16%;
+  --card-foreground: 42 27% 94%;
+  --card-border: 230 14% 25%;
+  --primary: 169 57% 46%;
+  --primary-foreground: 230 19% 12%;
+  --secondary: 230 14% 22%;
+  --secondary-foreground: 42 27% 94%;
+  --muted: 230 14% 22%;
+  --muted-foreground: 230 10% 67%;
+  --accent: 29 92% 61%;
+  --accent-foreground: 230 19% 12%;
   --destructive: 4 67% 58%;
   --destructive-foreground: 42 31% 96%;
   --popover: 228 19% 14%;
@@ -109,7 +109,43 @@
   .animate-rise-2 { animation: rise .55s .08s cubic-bezier(.22,1,.36,1) both; }
   .animate-rise-3 { animation: rise .55s .16s cubic-bezier(.22,1,.36,1) both; }
   .animate-pulse-soft { animation: pulse-soft 2.4s ease-in-out infinite; }
+  .shop-shell {
+    --shop-ink: #12131a;
+    --shop-panel: #1c1d25;
+    --shop-panel-raised: #262730;
+    --shop-paper: #f2eee4;
+    --shop-paper-muted: #d8d4ca;
+    --shop-line: rgba(242, 238, 228, .18);
+    --shop-acid: #d6f36b;
+    --shop-orange: #f27d4b;
+    background: var(--shop-ink);
+    color: var(--shop-paper);
+  }
+  .shop-grid {
+    background-image: linear-gradient(rgba(242, 238, 228, .045) 1px, transparent 1px), linear-gradient(90deg, rgba(242, 238, 228, .045) 1px, transparent 1px);
+    background-size: 44px 44px;
+    mask-image: linear-gradient(to bottom, black 0%, transparent 82%);
+  }
+  .shop-scanline {
+    background: linear-gradient(90deg, transparent, var(--shop-acid), transparent);
+    animation: scanline 4.8s cubic-bezier(.22,1,.36,1) infinite;
+  }
+  .shop-reveal {
+    animation: shop-reveal .7s cubic-bezier(.22,1,.36,1) both;
+  }
+  .shop-reveal-2 {
+    animation: shop-reveal .7s .12s cubic-bezier(.22,1,.36,1) both;
+  }
+  .shop-reveal-3 {
+    animation: shop-reveal .7s .22s cubic-bezier(.22,1,.36,1) both;
+  }
+  .shop-float {
+    animation: shop-float 6s ease-in-out infinite;
+  }
 }
 
 @keyframes rise { from { opacity: 0; transform: translateY(10px); } to { opacity: 1; transform: translateY(0); } }
 @keyframes pulse-soft { 0%, 100% { opacity: .55; } 50% { opacity: 1; } }
+@keyframes shop-reveal { from { opacity: 0; transform: translateY(18px); } to { opacity: 1; transform: translateY(0); } }
+@keyframes shop-float { 0%, 100% { transform: translateY(0) rotate(-2deg); } 50% { transform: translateY(-9px) rotate(2deg); } }
+@keyframes scanline { 0%, 18% { transform: translateX(-100%); opacity: 0; } 28% { opacity: .85; } 68%, 100% { transform: translateX(100%); opacity: 0; } }
