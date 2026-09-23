@@ -41,7 +41,7 @@ type TelegramUpdate = {
 };
 
 type WizardState = {
-  stage: "meta" | "payload" | "replacePayload" | "cardPayload" | "supportReply";
+  stage: "meta" | "payload" | "replacePayload" | "cardPayload" | "supportReply" | "paymentInstructions";
   productId?: number;
   name?: string;
   price?: number;
@@ -319,6 +319,16 @@ async function replyToTicket(ownerChatId: number, ticketId: number, reply: strin
   void logShopEvent("support_replied", `Support ticket #${ticketId} answered`);
 }
 
+async function updatePaymentInstructions(ownerChatId: number, instructions: string): Promise<void> {
+  const settings = await getSettings();
+  await db.update(shopSettingsTable).set({
+    paymentInstructions: encrypt(instructions),
+    updatedAt: new Date(),
+  }).where(eq(shopSettingsTable.id, settings.id));
+  await sendMessage(ownerChatId, "Инструкции по оплате обновлены.");
+  void logShopEvent("settings_updated", "Payment instructions updated via Telegram");
+}
+
 async function handleOwnerCommand(chatId: number, text: string, message: TelegramMessage): Promise<boolean> {
   const owner = await ownerId();
   if (text.startsWith("/setup ")) {
@@ -347,6 +357,17 @@ async function handleOwnerCommand(chatId: number, text: string, message: Telegra
     return true;
   }
   if (chatId !== owner) return false;
+  if (text === "/setpayment" || text.startsWith("/setpayment ")) {
+    const instructions = text.slice("/setpayment".length).trim();
+    if (instructions) {
+      wizard.delete(String(chatId));
+      await updatePaymentInstructions(chatId, instructions);
+    } else {
+      wizard.set(String(chatId), { stage: "paymentInstructions" });
+      await sendMessage(chatId, "Отправьте следующим сообщением новый текст инструкции по оплате.\n\nДля отмены отправьте /owner.");
+    }
+    return true;
+  }
   if (text === "/owner" || text === "/admin") {
     await sendMessage(chatId, "<b>GHOST OWNER</b>\n\nПанель управления магазином.", {
       inline_keyboard: [
@@ -435,6 +456,15 @@ async function handleOwnerCommand(chatId: number, text: string, message: Telegra
     }
     wizard.delete(String(chatId));
     await replyToTicket(chatId, state.ticketId, text);
+    return true;
+  }
+  if (state?.stage === "paymentInstructions") {
+    if (!text || text.startsWith("/")) {
+      await sendMessage(chatId, "Нужен обычный текст инструкции по оплате. Для отмены отправьте /owner.");
+      return true;
+    }
+    wizard.delete(String(chatId));
+    await updatePaymentInstructions(chatId, text);
     return true;
   }
   if (state?.stage === "meta") {
@@ -620,13 +650,6 @@ async function handleMessage(message: TelegramMessage): Promise<void> {
     }
   }
   const owner = await ownerId();
-  if (owner === chatId && text.startsWith("/setpayment ")) {
-    const instructions = text.slice(12).trim();
-    await db.update(shopSettingsTable).set({ paymentInstructions: encrypt(instructions), updatedAt: new Date() }).where(eq(shopSettingsTable.id, (await getSettings()).id));
-    await sendMessage(chatId, "Инструкции по оплате обновлены.");
-    void logShopEvent("settings_updated", "Payment instructions updated via Telegram");
-    return;
-  }
   if (owner !== chatId && text && !text.startsWith("/")) {
     const [ticket] = await db.insert(supportTicketsTable).values({
       customerNameEncrypted: encrypt(message.from?.first_name ?? "Telegram user"),
